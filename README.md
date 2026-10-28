@@ -1,5 +1,7 @@
 # agent-memory-and-evolution
 
+[![test](https://github.com/quantumfuture-tech/agent-memory-and-evolution/actions/workflows/test.yml/badge.svg)](https://github.com/quantumfuture-tech/agent-memory-and-evolution/actions/workflows/test.yml)
+
 Two skills for an LLM agent that is expected to get better over time: one keeps
 what happened across sessions, the other lets its own skills evolve.
 
