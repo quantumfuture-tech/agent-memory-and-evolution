@@ -1,6 +1,12 @@
 # registry-with-one-skill.yaml —— 一个条目的脱敏示例
 #
 # 这不是可直接运行的 registry：它用一个虚构的 skill 展示条目形状。
+# 配套桩文件：examples/static-blog-search/SKILL.md；把两者放进同一个临时 DSH_HOME 后可 lint 干净：
+#   tmp="$(mktemp -d)"
+#   mkdir -p "$tmp/skills/.evolution"
+#   cp skill-evolution/examples/registry-with-one-skill.yaml "$tmp/skills/.evolution/registry.yaml"
+#   cp -r skill-evolution/examples/static-blog-search "$tmp/skills/"
+#   DSH_HOME="$tmp" node skill-evolution/scripts/skillctl.js lint
 # 真实 registry 应通过 `skillctl init` / `skillctl add` 建立，并由 `skillctl lint` 校验。
 # 项目名、路径、人员和历史都经过替换，只保留结构与字段之间的关系。
 
