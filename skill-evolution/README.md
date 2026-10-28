@@ -36,6 +36,25 @@ registry 记录“这个 skill 是谁写的、现在什么状态、被谁改过�
 
 原因不是洁癖：执行体每轮都会被换掉，机器是唯一能记住“当时的那个状态”的东西。提案一旦和它依据的状态脱钩，人批准的就是一个已经不存在的东西。重新 `propose` 的成本，远小于批错一次的成本。
 
+## 它实际长这样
+
+以下为 2026-10-28 的真实终端记录（路径与重复提示从略；`[exit 2]` 是实际退出码）。先 `propose`，改一下 `SKILL.md`，再 `stale` 和 `accept`；旧提案仍是 open，所以先 `reject` 结案，同名 `propose` 才成功。
+
+```text
+$ S="$DSH_HOME/skills/skill-evolution/scripts/skillctl.js"
+$ node "$S" propose demo-skill --note "把验证步骤写清楚"
+钉在：version 1 / skill sha256 807b2ebb6949…
+$ node "$S" stale demo-skill
+demo-skill               open      STALE（SKILL.md 已变）
+$ node "$S" accept demo-skill --by user
+拒绝收编：提案已 stale（SKILL.md 在立提案之后变过）。
+[exit 2]
+$ node "$S" reject demo-skill --why "目标已变，旧提案作废"
+$ node "$S" propose demo-skill --note "重新钉在改后的目标上"
+$ node "$S" accept demo-skill --by user
+已收编：demo-skill → version 2（by user）
+```
+
 ## `write: user` 是什么
 
 每个条目有一个 `write` 字段，声明“这块是谁写的”：
@@ -81,36 +100,19 @@ skillctl —— skill-evolution 的手（不是脑）。engine skill-evo-v13 / r
 以下命令都假设 `DSH_HOME` 已指向运行时的技能根。示例里的名字是虚构的。
 
 ```bash
-# 1. 从零建立目录与空 registry（可重复执行）
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" init
+S="$DSH_HOME/skills/skill-evolution/scripts/skillctl.js"
 
-# 2. 建档：条目进入 registry，正文草稿落在 .evolution/scaffold/
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" add blog-search --tier global
-
-# 3. 编辑 scaffold/blog-search/SKILL.md，写好 name/description/whenToUse 和正文。
-#    然后把它移入 live 目录；propose 只对 live 文件计算目标哈希。
-mkdir -p "$DSH_HOME/skills/blog-search"
-mv "$DSH_HOME/skills/.evolution/scaffold/blog-search/SKILL.md" \
-   "$DSH_HOME/skills/blog-search/SKILL.md"
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" set blog-search status=active
-
-# 4. 立提案：记录目标哈希和变更理由
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" \
-  propose blog-search --note "把站点搜索的验证步骤写全，收窄触发条件"
-
-# 5. 人查看提案与 diff，确认目标没有再变
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" stale blog-search
-
-# 6. 收编：version+1，结案记录进入 proposalsHistory
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" accept blog-search --by user
-
-# 7. 对账
-node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" lint
+node "$S" init
+node "$S" add blog-search --tier global
+# 编辑 .evolution/scaffold/blog-search/SKILL.md，再移入 $DSH_HOME/skills/blog-search/
+node "$S" set blog-search status=active
+node "$S" propose blog-search --note "补上验证步骤"
+node "$S" stale blog-search
+node "$S" accept blog-search --by user
+node "$S" lint
 ```
 
 这里有一个当前版本的实际边界：`accept` **不替你应用 diff，也不修改 `SKILL.md`**。它校验提案钉住的状态仍在，然后登记收编、升版本、写 changelog。正文改动要么在 `propose` 前已经落盘，要么由人按提案应用后重新 `propose`。示例采用前一种做法。
-
-如果目标在 `propose` 之后被改过，`accept` 会拒绝，退出码为 2；此时重新立提案，不要绕过。
 
 ## 测试怎么跑
 
