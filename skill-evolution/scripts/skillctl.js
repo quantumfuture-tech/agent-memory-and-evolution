@@ -6,6 +6,7 @@
  * 只做确定性操作与报告：读写唯一真源 registry.yaml、校验与实体的一致性、
  * 生成目录预览。**永不自行决定晋升/淘汰**——那是判断层（agent + 用户）的事。
  *
+ *   node skillctl.js init                              # 建目录与空 registry（幂等）
  *   node skillctl.js list [--tier meta|global|project] [--status active|draft|...]
  *   node skillctl.js show <name>
  *   node skillctl.js add <name> [--tier meta|global] [--scope durable|as-needed] [--enforces text|runtime]
@@ -929,6 +930,37 @@ function render(p, reg) {
 
 /* ------------------------------------------------------------------ 命令 */
 
+function cmdInit(p) {
+  // 唯一的引导入口：registry 缺失时，其余命令都会在 loadRegistry 处直接失败，
+  // 新机器因此无法从零开始。这里只做"建目录 + 写空 registry"，不触碰任何已有文件；
+  // 重复执行是幂等的——现有 registry 一个字节都不改。
+  for (const dir of [p.skillsRoot, p.evoDir, p.proposalsDir, p.scaffoldDir, p.archiveDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (fs.existsSync(p.registryPath)) {
+    console.log(`registry 已存在，未改动：${p.registryPath}`);
+    return;
+  }
+  const body = [
+    "# registry.yaml —— skill 生命周期的「唯一真源」",
+    "# 由 `skillctl init` 从零建立；此后一律经本引擎写入，不手改 YAML。",
+    "#",
+    "# conformsTo       数据格式戳（与程序认识的那一版对齐）。",
+    "# updated          最后一次写入日期（YYYY-MM-DD）。",
+    "# skills           技能条目列表；空 registry 为 []。",
+    "# proposals        未结案提案；结案后移入 proposalsHistory。",
+    "# proposalsHistory 已结案提案历史；只追加、永不删。",
+    "conformsTo: " + REGISTRY_SCHEMA,
+    "updated: " + today(),
+    "skills: []",
+    "proposals: []",
+    "proposalsHistory: []",
+    "",
+  ].join("\n");
+  fs.writeFileSync(p.registryPath, body, "utf8");
+  console.log(`已初始化 registry：${p.registryPath}`);
+}
+
 function cmdList(p, reg, args) {
   const tier = argVal(args, "--tier");
   const status = argVal(args, "--status");
@@ -1439,6 +1471,7 @@ function setPath(obj, k, v) {
 function help() {
   console.log(`skillctl —— skill-evolution 的手（不是脑）。engine ${ENGINE_VERSION} / registry schema ${REGISTRY_SCHEMA}
 
+  init                             建目录与空 registry（幂等；从零开始的第一步）
   list [--tier T] [--status S]      按层/状态列出
   show <name>                       单条完整条目 + 常驻目录那一行
   add <name> [--tier T] [...]       建档（draft，落在 .evolution/scaffold/）
@@ -1474,6 +1507,8 @@ function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") return help();
   const p = locate();
+
+  if (cmd === "init") return cmdInit(p);
 
   if (cmd === "add") {
     const reg = loadRegistry(p);
