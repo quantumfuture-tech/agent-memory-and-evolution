@@ -1,4 +1,4 @@
-# dsh-skills
+# agent-memory-and-evolution
 
 Two skills for an LLM agent that is expected to get better over time: one keeps
 what happened across sessions, the other lets its own skills evolve.
