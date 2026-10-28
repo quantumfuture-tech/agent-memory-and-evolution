@@ -20,8 +20,8 @@ making it forever, because nothing in the loop turns a failure into a change.
 
 | Skill | Problem it solves | Core idea |
 |---|---|---|
-| session-handoff/ | state lost between sessions | memory as a **protocol**: a memory pack declares what counts as state, what to read on takeover, and how to write back |
-| skill-evolution/ | skills never improve | a **registry** as the single source of truth, proposals pinned to a content hash, and human-gated writes |
+| [session-handoff/](session-handoff/) | state lost between sessions | memory as a **protocol**: a memory pack declares what counts as state, what to read on takeover, and how to write back |
+| [skill-evolution/](skill-evolution/) | skills never improve | a **registry** as the single source of truth, proposals pinned to a content hash, and human-gated writes |
 
 They are designed to be used together: the evolution engine manages skills,
 session-handoff is one of the skills it manages.
@@ -35,6 +35,7 @@ cp -r session-handoff "$DSH_HOME/skills/"
 cp -r skill-evolution "$DSH_HOME/skills/"
 
 # the engine needs Node 18+
+node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" init
 node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" list
 ~~~
 
@@ -56,7 +57,9 @@ node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" list
 
 ~~~
 session-handoff/     SKILL.md — the protocol, plus a PROTOCOL template and an example
+                     README.md — the problem, a five-minute walkthrough, limits
 skill-evolution/     SKILL.md + scripts/skillctl.js — the engine
+                     README.md — concepts, commands, a full add → propose → accept flow
                      registry.example.yaml — an empty registry to start from
 ~~~
 
@@ -64,7 +67,7 @@ skill-evolution/     SKILL.md + scripts/skillctl.js — the engine
 
 Used daily by its author for about a month; the engine has a test suite that
 runs against a temporary registry. The design of the next major version is
-documented in skill-evolution/docs/DESIGN-v2.md and is **not implemented** —
+documented in [skill-evolution/docs/DESIGN-v2.md](skill-evolution/docs/DESIGN-v2.md) and is **not implemented** —
 this repository ships the working v13 engine.
 
 ## License
