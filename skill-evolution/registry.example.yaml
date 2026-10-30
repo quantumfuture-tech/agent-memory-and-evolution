@@ -1,27 +1,19 @@
-# registry.example.yaml —— 空 registry 模板
+# registry.example.yaml —— 空 registry 模板（数据格式 v4）
 #
-# 用法：复制到 `$DSH_HOME/skills/.evolution/registry.yaml`，或直接运行
-# `node $DSH_HOME/skills/skill-evolution/scripts/skillctl.js init` 让引擎建立目录。
-# 复制后把 updated 改成当天日期。之后一律经 skillctl 写入，不手改 YAML；
-# 若确实手改过，跑一次 `skillctl lint`。
+# 用法：直接运行引擎的 init，它会建目录并写出空 registry：
+#   node $DSH_HOME/skills/skill-evolution/scripts/skillctl.js init
+# 或把本文件复制到 $DSH_HOME/skills/.evolution/registry.yaml，并把 updated 改成当天。
+# 之后一律经 skillctl 写入，不手改 YAML；若确实手改过，跑一次 check。
 #
-# 这个文件只描述形状，不含任何真实项目、人员或技能数据。
+# 本文件只描述形状，不含任何真实项目、人员或技能数据。
 
-# 数据格式戳。必须与当前引擎认识的那一版一致；不认识的戳可能读漏字段。
-# 目前是 skill-evo-v3。
-conformsTo: skill-evo-v3
+# 数据格式戳：必须与引擎认识的那一版一致（当前 skill-evo-v4）。
+conformsTo: skill-evo-v4
 
-# 最后一次写入日期（YYYY-MM-DD）。引擎在每次 saveRegistry 时更新。
+# 最后一次写入日期（YYYY-MM-DD）。引擎每次 saveRegistry 时更新。
 updated: 2026-01-01
 
-# 未结案提案。一个 name 只放一条；提案钉着目标哈希，目标一改就过期。
-# 结案（accept / reject）后从本列表移入 proposalsHistory，只追加、不删。
-proposals: []
-
-# 技能条目。每个条目描述一个 skill 的生命周期，而不是它的正文；
-# name / description / whenToUse 以 skills/<name>/SKILL.md 的 frontmatter 为准。
-# 空 registry 就是空列表。
+# 技能条目：描述生命周期（谁写的、什么状态、整包哈希），不复制正文。
+# name / description 以 skills/<name>/SKILL.md 的 frontmatter 为准。
+# 观察与提案不在本文件——它们在 .evolution/history/<name>/。
 skills: []
-
-# 已结案提案历史。只追加、永不删；被否决的 why 是最贵的负向知识。
-proposalsHistory: []

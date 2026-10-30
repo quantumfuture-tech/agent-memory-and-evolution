@@ -8,20 +8,27 @@ const path = require("node:path");
 const test = require("node:test");
 
 const SCRIPT = path.resolve(__dirname, "..", "scripts", "skillctl.js");
+const SKILL_SRC = path.resolve(__dirname, "..");
 const REGISTRY = path.join("skills", ".evolution", "registry.yaml");
+const HISTORY = path.join("skills", ".evolution", "history");
 
-/** 每个测试一个临时 DSH_HOME；测试结束即删。测试进程绝不会指向真实 registry。 */
+/** 每个用例一个临时 DSH_HOME；结束即删。测试进程绝不指向真实 registry。 */
 function makeHome(t) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-skills-test-"));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  t.after(function () { fs.rmSync(home, { recursive: true, force: true }); });
+  // 把引擎自身放进 skills/，否则 train authoring / self 找不到培训包与本体
+  const dest = path.join(home, "skills", "skill-evolution");
+  fs.mkdirSync(dest, { recursive: true });
+  for (const item of ["SKILL.md", "scripts", "references"]) {
+    fs.cpSync(path.join(SKILL_SRC, item), path.join(dest, item), { recursive: true });
+  }
   return home;
 }
 
-/** 统一入口：只通过 CLI 与磁盘交互，不 require 引擎（引擎在 require 时会直接跑 main）。 */
 function run(home, args) {
-  return spawnSync(process.execPath, [SCRIPT, ...args], {
+  return spawnSync(process.execPath, [SCRIPT].concat(args), {
     cwd: home,
-    env: { ...process.env, DSH_HOME: home },
+    env: Object.assign({}, process.env, { DSH_HOME: home, DSH_SESSION_ID: "session-test" }),
     encoding: "utf8",
   });
 }
@@ -32,240 +39,202 @@ function ok(home, args) {
   return r;
 }
 
-function init(home) {
-  return ok(home, ["init"]);
+function fail(home, args, code) {
+  const r = run(home, args);
+  assert.equal(r.status, code || 1, "期望退出码 " + (code || 1) + "，实际 " + r.status + "\nstdout:\n" + r.stdout + "\nstderr:\n" + r.stderr);
+  return r;
 }
 
-function add(home, name) {
-  return ok(home, ["add", name || "demo-skill"]);
+function setup(t) {
+  const home = makeHome(t);
+  ok(home, ["init"]);
+  ok(home, ["train", "authoring"]);
+  ok(home, ["add", "skill-evolution", "--tier", "meta"]);
+  ok(home, ["sync", "skill-evolution"]);
+  return home;
 }
 
-/** add 把草稿放在 scaffold/；提案只对 live SKILL.md 计算目标哈希，所以先搬到 skills/<name>/。 */
-function activate(home, name) {
-  const dir = name || "demo-skill";
-  const from = path.join(home, "skills", ".evolution", "scaffold", dir);
-  const to = path.join(home, "skills", dir);
+function newSkill(home, name) {
+  ok(home, ["add", name]);
+  const from = path.join(home, "skills", ".evolution", "scaffold", name);
+  const to = path.join(home, "skills", name);
   fs.renameSync(from, to);
+  ok(home, ["set", name, "status=active"]);
+  ok(home, ["sync", name]);
   return to;
 }
 
-function registryText(home) {
-  return fs.readFileSync(path.join(home, REGISTRY), "utf8");
+function note(home, extra) {
+  return ok(home, ["note", "--what", "测试事实", "--lesson", "事前该问的那一句", "--scope", "无归属",
+    "--cause", "model", "--type", "顺序做反", "--seq", "12-20"].concat(extra || []));
 }
 
-function proposalPath(home, name) {
-  return path.join(home, "skills", ".evolution", "proposals", (name || "demo-skill") + ".md");
+function entriesOf(home, pkg) {
+  const dir = path.join(home, HISTORY, pkg, "entries");
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(function (f) { return f.endsWith(".md"); });
 }
 
-test("init 建立目录与空 registry，且重复执行不覆盖已有内容", (t) => {
+test("init：建目录与空 registry，重复执行不改动", function (t) {
   const home = makeHome(t);
-  const first = init(home);
-
+  const first = ok(home, ["init"]);
   assert.match(first.stdout, /已初始化 registry/);
-  for (const dir of ["skills", "skills/.evolution", "skills/.evolution/proposals", "skills/.evolution/scaffold", "skills/.evolution/archive"]) {
-    assert.ok(fs.existsSync(path.join(home, dir)), "缺少目录：" + dir);
+  for (const d of ["skills", "skills/.evolution", "skills/.evolution/history", "skills/.evolution/scaffold", "skills/.evolution/archive"]) {
+    assert.ok(fs.existsSync(path.join(home, d)), "缺少目录：" + d);
   }
-  const text = registryText(home);
-  assert.match(text, /^conformsTo: skill-evo-v3$/m);
+  const text = fs.readFileSync(path.join(home, REGISTRY), "utf8");
+  assert.match(text, /^conformsTo: skill-evo-v4$/m);
   assert.match(text, /^skills: \[\]$/m);
-  assert.match(text, /^proposals: \[\]$/m);
-  assert.match(text, /^proposalsHistory: \[\]$/m);
-  assert.match(text, /^updated: \d{4}-\d{2}-\d{2}$/m);
 
-  const before = { text, mtimeMs: fs.statSync(path.join(home, REGISTRY)).mtimeMs };
-  const second = init(home);
-  assert.equal(second.status, 0);
+  const before = fs.statSync(path.join(home, REGISTRY)).mtimeMs;
+  const second = ok(home, ["init"]);
   assert.match(second.stdout, /registry 已存在，未改动/);
-  assert.equal(registryText(home), before.text);
-  assert.equal(fs.statSync(path.join(home, REGISTRY)).mtimeMs, before.mtimeMs);
+  assert.equal(fs.statSync(path.join(home, REGISTRY)).mtimeMs, before);
 });
 
-test("a. add 建档后 list 与 show 都能读到", (t) => {
+test("add 之前必须 train authoring（上岗资格）", function (t) {
   const home = makeHome(t);
-  init(home);
-  const added = add(home, "demo-skill");
-  assert.match(added.stdout, /已建档（draft）：demo-skill/);
+  ok(home, ["init"]);
+  const denied = fail(home, ["add", "demo-skill"]);
+  assert.match(denied.stderr, /train authoring/);
 
-  const listed = ok(home, ["list"]);
-  assert.match(listed.stdout, /demo-skill/);
-  assert.match(listed.stdout, /draft/);
-
-  const shown = ok(home, ["show", "demo-skill"]);
-  assert.match(shown.stdout, /name\s+demo-skill/);
-  assert.match(shown.stdout, /status\s+draft\s+version 1/);
-  assert.match(shown.stdout, /草稿在/);
+  ok(home, ["train", "authoring"]);
+  const added = ok(home, ["add", "demo-skill"]);
+  assert.match(added.stdout, /已建档：demo-skill/);
+  assert.ok(fs.existsSync(path.join(home, "skills", ".evolution", "scaffold", "demo-skill", "SKILL.md")));
 });
 
-test("b. propose 钉住目标哈希；目标改动后 stale；accept 过期提案被拒", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  const live = activate(home, "demo-skill");
+test("note 三字段必填：缺 scope / 越界 type 都拒；合法则落一条带正文哈希的条目", function (t) {
+  const home = setup(t);
+  fail(home, ["note", "--what", "x", "--lesson", "y", "--cause", "model", "--type", "顺序做反"]);
+  fail(home, ["note", "--what", "x", "--lesson", "y", "--scope", "无归属", "--cause", "model", "--type", "不存在的类型"]);
 
-  const proposed = ok(home, ["propose", "demo-skill", "--note", "补一个可验证的说明"]);
-  assert.match(proposed.stdout, /已立提案/);
-  assert.match(proposed.stdout, /skill sha256 [0-9a-f]{12}/);
+  note(home);
+  const files = entriesOf(home, "_unowned");
+  assert.equal(files.length, 1);
+  assert.match(files[0], /^\d{8}-f\d+-[0-9a-f]{8}\.md$/);
 
-  const proposal = fs.readFileSync(proposalPath(home, "demo-skill"), "utf8");
-  assert.match(proposal, /^targetSkillHash: [0-9a-f]{64}$/m);
-  assert.match(proposal, /^targetRegistryHash: [0-9a-f]{64}$/m);
-  assert.match(proposal, /^basedOnVersion: 1$/m);
-  assert.match(proposal, /^status: open$/m);
-
-  const fresh = ok(home, ["stale"]);
-  assert.match(fresh.stdout, /fresh（可批）/);
-
-  fs.appendFileSync(path.join(live, "SKILL.md"), "\n这一行改变了目标内容。\n", "utf8");
-  const stale = ok(home, ["stale"]);
-  assert.match(stale.stdout, /STALE（SKILL.md 已变）/);
-
-  const refused = run(home, ["accept", "demo-skill"]);
-  assert.equal(refused.status, 2, "过期提案必须非 0 退出");
-  assert.match(refused.stderr, /拒绝收编：提案已 stale/);
-  const after = registryText(home);
-  assert.match(after, /^  - name: demo-skill$/m);
-  assert.match(after, /^    status: open$/m);
+  const view = ok(home, ["view"]);
+  assert.match(view.stdout, /沿革 1 条/);
 });
 
-test("c. accept 新鲜提案成功，并写入 proposalsHistory", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  activate(home, "demo-skill");
-  ok(home, ["propose", "demo-skill", "--note", "把说明补完整"]);
-
-  const accepted = ok(home, ["accept", "demo-skill", "--by", "user"]);
-  assert.match(accepted.stdout, /已收编：demo-skill → version 2/);
-
-  const text = registryText(home);
-  assert.match(text, /^proposals: \[\]$/m);
-  assert.match(text, /^proposalsHistory:$/m);
-  assert.match(text, /status: accepted/);
-  assert.match(text, /decidedBy: user/);
-
-  const shown = ok(home, ["show", "demo-skill"]);
-  assert.match(shown.stdout, /status\s+draft\s+version 2/);
-  assert.match(shown.stdout, /提案历史 proposalsHistory \(1\)/);
-  assert.match(shown.stdout, /accepted/);
-
-  const proposal = fs.readFileSync(proposalPath(home, "demo-skill"), "utf8");
-  assert.match(proposal, /^status: accepted$/m);
+test("note：同 type 同 scope 自动判 repeat", function (t) {
+  const home = setup(t);
+  const first = note(home);
+  assert.doesNotMatch(first.stdout, /repeat of/);
+  const second = note(home);
+  assert.match(second.stdout, /repeat of f/);
 });
 
-test("d. reject 必须带理由，理由写进历史并保留在提案文件里", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  activate(home, "demo-skill");
-  ok(home, ["propose", "demo-skill", "--note", "试一试"]);
-
-  const noWhy = run(home, ["reject", "demo-skill"]);
-  assert.equal(noWhy.status, 1);
-  assert.match(noWhy.stderr, /reject 必须给理由/);
-  assert.match(fs.readFileSync(proposalPath(home, "demo-skill"), "utf8"), /^status: open$/m);
-
-  const why = "离线场景没有覆盖，先不改";
-  const rejected = ok(home, ["reject", "demo-skill", "--why", why]);
-  assert.match(rejected.stdout, /理由已留下/);
-
-  const text = registryText(home);
-  assert.match(text, /status: rejected/);
-  assert.ok(text.includes(why), "registry 历史里应保留否决理由");
-  assert.match(text, /decidedAt: \d{4}-\d{2}-\d{2}/);
-  assert.match(text, /decidedBy: user/);
-
-  const proposal = fs.readFileSync(proposalPath(home, "demo-skill"), "utf8");
-  assert.match(proposal, /^status: rejected$/m);
-  assert.ok(proposal.includes(why), "提案文件里应保留否决理由");
+test("self 留读记录（资格门的事实依据）", function (t) {
+  const home = setup(t);
+  const out = ok(home, ["self", "skill-evolution"]);
+  assert.match(out.stdout, /# 领取：skill-evolution/);
+  const reads = fs.readFileSync(path.join(home, HISTORY, "skill-evolution", "reads.jsonl"), "utf8").trim().split("\n").map(function (l) { return JSON.parse(l); });
+  const selfReads = reads.filter(function (r) { return !r.what; });
+  assert.equal(selfReads.length, 1);
+  const rec = selfReads[0];
+  assert.match(rec.package, /^[0-9a-f]{64}$/);
 });
 
-test("e. write: user 的条目默认拒绝 set，带 --user 才允许", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  ok(home, ["set", "demo-skill", "write=user"]);
-
-  const refused = run(home, ["set", "demo-skill", "status=active"]);
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /write=user（人写的），agent 不得直接改其 status/);
-  assert.match(registryText(home), /status: draft/);
-
-  const allowed = ok(home, ["set", "demo-skill", "status=active", "--user"]);
-  assert.match(allowed.stdout, /status/);
-  assert.match(registryText(home), /status: active/);
+test("merge 四道门之一：没有读记录 → 拒（退出码 2）", function (t) {
+  const home = setup(t);
+  ok(home, ["propose", "skill-evolution", "--why", "测试提案"]);
+  const denied = fail(home, ["merge", "skill-evolution", "--why", "批准"], 2);
+  assert.match(denied.stderr, /读记录/);
 });
 
-test("f. friction 缺 lesson 被拒；list 可见；clear 后不再待评估", (t) => {
-  const home = makeHome(t);
-  init(home);
+test("merge 成功：version+1，packageHash 置 pending；sync 后 check 干净", function (t) {
+  const home = setup(t);
+  ok(home, ["self", "skill-evolution"]);
+  ok(home, ["propose", "skill-evolution", "--why", "测试提案"]);
+  const merged = ok(home, ["merge", "skill-evolution", "--why", "用户批准", "--by", "user"]);
+  assert.match(merged.stdout, /version 2/);
 
-  const refused = run(home, ["friction", "add", "--what", "把解析失败当成文件损坏"]);
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /必须同时给 --what/);
-  assert.ok(!fs.existsSync(path.join(home, "skills", ".evolution", "friction.jsonl")));
+  const reg = fs.readFileSync(path.join(home, REGISTRY), "utf8");
+  assert.match(reg, /version: 2/);
+  assert.match(reg, /packageHash: 'pending:f/);
 
-  const fact = "把一次解析失败当成文件已损坏";
-  const lesson = "断言它坏之前，验过原始字节吗？";
-  const added = ok(home, ["friction", "add", "--what", fact, "--lesson", lesson, "--type", "误判"]);
-  assert.match(added.stdout, /已记账：f1/);
-  assert.match(added.stdout, /待评估 1 条/);
-
-  const listed = ok(home, ["friction", "list"]);
-  assert.ok(listed.stdout.includes(fact));
-  assert.ok(listed.stdout.includes(lesson));
-  assert.match(listed.stdout, /待评估 1 条/);
-
-  const cleared = ok(home, ["friction", "clear", "--batch", "误判"]);
-  assert.match(cleared.stdout, /已把 1 条移入归档/);
-
-  const after = ok(home, ["friction", "list"]);
-  assert.ok(!after.stdout.includes(fact), "已归档的事实不应再出现在待评估列表里");
-  assert.match(after.stdout, /摩擦账本为空/);
-  const archive = fs.readFileSync(path.join(home, "skills", ".evolution", "friction-reviewed.md"), "utf8");
-  assert.ok(archive.includes(fact));
-  assert.ok(archive.includes(lesson));
+  ok(home, ["sync", "skill-evolution"]);
+  const chk = ok(home, ["check"]);
+  assert.match(chk.stdout, /check 通过/);
 });
 
-test("g. lint 在 registry 与磁盘不一致时报错并非 0 退出", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  fs.rmSync(path.join(home, "skills", ".evolution", "scaffold", "demo-skill"), { recursive: true, force: true });
-
-  const lint = run(home, ["lint"]);
-  assert.equal(lint.status, 2);
-  assert.match(lint.stdout, /问题（1）/);
-  assert.match(lint.stdout, /磁盘上无 demo-skill/);
-  assert.match(lint.stdout, /SKILL\.md（悬空条目）/);
+test("merge 四道门之二：提案立后目标变过 → stale，拒", function (t) {
+  const home = setup(t);
+  ok(home, ["self", "skill-evolution"]);
+  ok(home, ["propose", "skill-evolution", "--why", "测试提案"]);
+  fs.appendFileSync(path.join(home, "skills", "skill-evolution", "SKILL.md"), "\n<!-- drift -->\n");
+  const denied = fail(home, ["merge", "skill-evolution", "--why", "批准"], 2);
+  assert.match(denied.stderr, /stale/);
 });
 
-test("h. registry roundtrip 无损", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  ok(home, ["set", "demo-skill", "provenance=来自一次虚构的接入实验：a,b / c"]);
-  ok(home, ["friction", "add", "--what", "测试往返", "--lesson", "先跑 roundtrip 再改 schema"]);
-
-  const roundtrip = ok(home, ["roundtrip"]);
-  assert.match(roundtrip.stdout, /往返无损/);
+test("merge 四道门之三：批准者不得是作者", function (t) {
+  const home = setup(t);
+  ok(home, ["self", "skill-evolution"]);
+  ok(home, ["propose", "skill-evolution", "--why", "测试提案"]);
+  const denied = fail(home, ["merge", "skill-evolution", "--why", "自批", "--by", "agent"], 2);
+  assert.match(denied.stderr, /批准者/);
 });
 
-test("i. render 生成的 catalog 包含条目名", (t) => {
-  const home = makeHome(t);
-  init(home);
-  add(home, "demo-skill");
-  activate(home, "demo-skill");
+test("check：裸 skill / 孤儿引用 / 引用成环 / 包哈希漂移", function (t) {
+  const home = setup(t);
 
-  const rendered = ok(home, ["render"]);
-  assert.match(rendered.stdout, /已写出目录预览/);
-  const catalog = fs.readFileSync(path.join(home, "skills", ".evolution", "catalog.md"), "utf8");
-  assert.match(catalog, /demo-skill/);
+  // 裸 skill：磁盘有、registry 无
+  fs.mkdirSync(path.join(home, "skills", "bare-skill"), { recursive: true });
+  fs.writeFileSync(path.join(home, "skills", "bare-skill", "SKILL.md"), "---\nname: bare-skill\ndescription: x\n---\n");
+  let r = fail(home, ["check"], 2);
+  assert.match(r.stdout, /裸 skill/);
+
+  // 孤儿引用：references 里有文件，但没人指到
+  const demo = newSkill(home, "demo-skill");
+  fs.mkdirSync(path.join(demo, "references"), { recursive: true });
+  fs.writeFileSync(path.join(demo, "references", "orphan.md"), "# orphan\n");
+  r = fail(home, ["check"], 2);
+  assert.match(r.stdout, /孤儿引用/);
+
+  // 成环：SKILL.md → a.md → b.md → a.md
+  fs.writeFileSync(path.join(demo, "references", "a.md"), "# a\n见 references/b.md\n");
+  fs.writeFileSync(path.join(demo, "references", "b.md"), "# b\n见 references/a.md\n");
+  fs.appendFileSync(path.join(demo, "SKILL.md"), "\n见 references/a.md\n");
+  r = fail(home, ["check"], 2);
+  assert.match(r.stdout, /成环/);
+
+  // 哈希漂移：sync 之后又改了本体
+  ok(home, ["sync", "demo-skill"]);
+  fs.appendFileSync(path.join(demo, "SKILL.md"), "\n<!-- drift -->\n");
+  r = fail(home, ["check"], 2);
+  assert.match(r.stdout, /包已变/);
 });
 
-test("未知命令仍然非 0 退出（确保入口没有吞掉错误）", (t) => {
-  const home = makeHome(t);
-  init(home);
-  const unknown = run(home, ["not-a-command"]);
-  assert.equal(unknown.status, 1);
-  assert.match(unknown.stderr, /未知命令/);
+test("reject 保留理由；supersede 改状态且正文不变", function (t) {
+  const home = setup(t);
+  ok(home, ["self", "skill-evolution"]);
+  ok(home, ["propose", "skill-evolution", "--why", "提案一"]);
+  const rej = ok(home, ["reject", "skill-evolution", "--why", "理由必须留下"]);
+  assert.match(rej.stdout, /理由已留下/);
+
+  const files = entriesOf(home, "skill-evolution");
+  const text = files.map(function (f) { return fs.readFileSync(path.join(home, HISTORY, "skill-evolution", "entries", f), "utf8"); }).join("\n");
+  assert.match(text, /state: rejected/);
+  assert.match(text, /理由必须留下/);
+});
+
+test("review 把观察从 open 置为 reviewed", function (t) {
+  const home = setup(t);
+  note(home);
+  const files = entriesOf(home, "_unowned");
+  const id = /-f(\d+)-/.exec(files[0]);
+  const reviewed = ok(home, ["review", "f" + id[1]]);
+  assert.match(reviewed.stdout, /已评估：f/);
+  const text = fs.readFileSync(path.join(home, HISTORY, "_unowned", "entries", files[0]), "utf8");
+  assert.match(text, /state: reviewed/);
+});
+
+test("render 生成 catalog 投影", function (t) {
+  const home = setup(t);
+  ok(home, ["render"]);
+  const cat = fs.readFileSync(path.join(home, "skills", ".evolution", "catalog.md"), "utf8");
+  assert.match(cat, /## skill-evolution/);
+  assert.match(cat, /投影/);
 });

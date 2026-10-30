@@ -25,7 +25,7 @@ making it forever, because nothing in the loop turns a failure into a change.
 | Skill | Problem it solves | Core idea |
 |---|---|---|
 | [session-handoff/](session-handoff/) | state lost between sessions | memory as a **protocol**: a memory pack declares what counts as state, what to read on takeover, and how to write back |
-| [skill-evolution/](skill-evolution/) | skills never improve | a **registry** as the single source of truth, proposals pinned to a content hash, and human-gated writes |
+| [skill-evolution/](skill-evolution/) | skills never improve | **two tracks**: the runtime skill stays one package; the *why* lives in a separate history package. Proposals are pinned to a package hash, and **you must read the history before you may change anything** |
 
 They are designed to be used together: the evolution engine manages skills,
 session-handoff is one of the skills it manages.
@@ -45,16 +45,19 @@ node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" list
 
 ## Design principles
 
-1. **Reasons, not rules.** Every rule in these skills ships with the reason it
-   exists, because a rule can only be re-derived if the reason travels with it.
+1. **Reasons, not rules.** Every rule ships with the reason it exists, because a
+   rule can only be re-derived if the reason travels with it.
 2. **The machine is the only memory.** The human is replaced every session; the
-   registry and the memory pack are what actually persist.
-3. **Writes are gated.** Skills marked write: user can only be changed by a
-   human; the agent can propose, not edit.
-4. **Proposals are pinned.** A proposal records the hash of the state it was
-   written against; if the target moves, the proposal is stale and cannot be
-   accepted. You never approve a diff that no longer exists.
-5. **Rejection is knowledge.** A rejected proposal keeps its reason — the most
+   registry, the history packages and the memory pack are what actually persist.
+3. **Read before write.** Changing a skill means reading its history first; the
+   engine records that read. No record, no change — eligibility is a fact on disk,
+   not a good intention.
+4. **Writes are gated.** Skills marked write: user can only be changed by a human;
+   the agent can propose, not edit.
+5. **Proposals are pinned.** A proposal records the hash of the whole package it
+   was written against; if the target moves, the proposal is stale and cannot be
+   merged. You never approve a diff that no longer exists.
+6. **Rejection is knowledge.** A rejected proposal keeps its reason — the most
    expensive thing to lose is why something was refused.
 
 ## Repository layout
@@ -63,16 +66,23 @@ node "$DSH_HOME/skills/skill-evolution/scripts/skillctl.js" list
 session-handoff/     SKILL.md — the protocol, plus a PROTOCOL template and an example
                      README.md — the problem, a five-minute walkthrough, limits
 skill-evolution/     SKILL.md + scripts/skillctl.js — the engine
-                     README.md — concepts, commands, a full add → propose → accept flow
+                     references/authoring.md — the authoring course (read on demand)
+                     README.md — concepts, commands, a full read → propose → merge flow
+                     docs/DESIGN.md — the design behind v16 (implemented)
                      registry.example.yaml — an empty registry to start from
+                     tests/ — 13 cases, no npm dependencies
 ~~~
 
 ## Status
 
-Used daily by its author for about a month; the engine has a test suite that
-runs against a temporary registry. The design of the next major version is
-documented in [skill-evolution/docs/DESIGN-v2.md](skill-evolution/docs/DESIGN-v2.md) and is **not implemented** —
-this repository ships the working v13 engine.
+Engine **v16** (data format v4), used daily by its author. The test suite runs
+against temporary registries and never touches real data:
+
+~~~bash
+node --test skill-evolution/tests/
+~~~
+
+CI runs the same command on Node 20 and 22.
 
 ## License
 

@@ -1,20 +1,16 @@
-# registry-with-one-skill.yaml —— 一个条目的脱敏示例
+# registry-with-one-skill.yaml —— 一个条目的脱敏示例（数据格式 v4）
 #
 # 这不是可直接运行的 registry：它用一个虚构的 skill 展示条目形状。
-# 配套桩文件：examples/static-blog-search/SKILL.md；把两者放进同一个临时 DSH_HOME 后可 lint 干净：
+# 配套桩文件：examples/static-blog-search/SKILL.md。把它放进临时 DSH_HOME 后可 check 干净：
 #   tmp="$(mktemp -d)"
 #   mkdir -p "$tmp/skills/.evolution"
 #   cp skill-evolution/examples/registry-with-one-skill.yaml "$tmp/skills/.evolution/registry.yaml"
 #   cp -r skill-evolution/examples/static-blog-search "$tmp/skills/"
-#   DSH_HOME="$tmp" node skill-evolution/scripts/skillctl.js lint
-# 真实 registry 应通过 `skillctl init` / `skillctl add` 建立，并由 `skillctl lint` 校验。
-# 项目名、路径、人员和历史都经过替换，只保留结构与字段之间的关系。
+#   DSH_HOME="$tmp" node skill-evolution/scripts/skillctl.js check
+# 真实 registry 应由 init / add 建立，并由 check 校验。
 
-conformsTo: skill-evo-v3
+conformsTo: skill-evo-v4
 updated: 2026-02-14
-
-proposals: []
-proposalsHistory: []
 
 skills:
   # 一个已经生效的全局 skill。名字 kebab-case，与目录名一致。
@@ -22,10 +18,12 @@ skills:
     tier: global                 # project | global | meta；project 不登记进全局 registry
     scope: durable               # durable | as-needed | transient
     status: active               # draft | active | superseded | archived
-    version: 3                   # 每次经批准的内容变更 +1
+    version: 3                   # 每次经批准的变更 +1
     enforces: text               # none | text | runtime；text 表示目前靠说明执行
     write: user                  # user | agent | user-gated；user 表示 agent 只能提案
     path: static-blog-search     # 相对 $DSH_HOME/skills/ 的目录名
+    packageHash: '1def708bde86810027f772faca420177b02b77117daed9080b14fa17c29602fd'
+                                 # 整包（目录内所有文件）的 sha256；propose 钉它，merge 前重算
     bornFrom: friction           # 这个条目由什么信号逼出来
     provenance: |
       由两次失败的站内搜索接入抽象而来：一次把客户端过滤当成服务端搜索，

@@ -1,6 +1,6 @@
 # skill-evolution
 
-一个给 agent 用的技能治理引擎：把“这次碰壁学到的东西”变成可审查、可回溯的 skill 变更，而不是停留在会话里。
+一个给 agent 用的技能治理引擎：把"这次碰壁学到的东西"变成**可审查、可回溯、可被下一个你读到**的 skill 变更，而不是停留在会话里。
 
 它由一个纯 Node 脚本（`scripts/skillctl.js`，无第三方依赖）和一份元协议（`SKILL.md`）组成。脚本只做确定性操作与报告，不自行决定晋升或淘汰。
 
@@ -8,143 +8,126 @@
 
 agent 会重复犯同一类错误，因为上一个会话的判断没有被任何东西留下。把经验写成 prose 也有同样的问题：写得再多，下一次可能仍然想不起来、找不到、或者被静默改掉。
 
-这个 skill 把“改进”拆成三段：
+这一版把"改进"拆成五段，分别对应五个动作：
 
-1. **摩擦先记账。** 每次碰壁留下两条：发生了什么，以及“事前该问的那一句”。没有后者不算长眼。
-2. **变更先提案。** 提案钉在目标当前的内容哈希上，人看过之后再收编。
-3. **状态有唯一真源。** 生命周期写在 registry；正文仍在各 skill 的 `SKILL.md`。
+1. **记**：碰壁当场留下事实与"事前该问的那一句"，并说清它归哪个技能（`scope`）、因谁而起（`cause`）、哪类失灵（`type`）。
+2. **读**：要改一个技能之前，先整份读它的**沿革**（观察与提案），并留下读记录。
+3. **提**：变更写成一条提案，**钉住整包哈希**；人看过再批。
+4. **批**：`merge` 前校验 fresh、读记录、`check`、批准者≠作者；任一不过即拒。
+5. **扫**：`view` 看分布与复发，`check` 卡格式与引用图。
 
-registry 记录“这个 skill 是谁写的、现在什么状态、被谁改过、有哪些未结提案”。它不复制正文。
+## 两条道
 
-## registry 是唯一真源
+| | 运行时 | 治理 |
+|---|---|---|
+| 是什么 | `skills/<name>/`：`SKILL.md` ＋ `references/` ＋ `scripts/` | `.evolution/history/<name>/`：观察与提案 |
+| 服务谁 | 用它／干这类活的人 | 改它／有权改的人 |
+| 怎么读 | 公告 → 加载正文 → 按需读 references | `self <name>` 整份读 |
 
-`$DSH_HOME/skills/.evolution/registry.yaml` 是生命周期决策的唯一真源。它记录每个条目的层（`tier`）、范围（`scope`）、状态、版本、强制方式、来源（`write`）、血缘、使用信号和提案历史。
+两者之间只有一条**单向指针**。加载一个技能，不会拉进它的全部历史；要看历史，必须显式走 `self`——而走过它，就留下读记录。
 
-`name` / `description` / `whenToUse` 的真源不是 registry，而是各自的 `SKILL.md` frontmatter。运行时目录直接从那里渲染，registry 复制一份只会漂移。`lint` 负责强制两边对齐：
+## 分发图
 
-- registry 有条目但磁盘没有 `SKILL.md` → 悬空条目；
-- 磁盘有 skill 目录但 registry 没有条目 → 裸 skill；
-- frontmatter 的 `name` 与目录/条目不一致，或 `description` 为空、超长；
-- 提案已经 stale，或已否决提案缺理由；
-- 活账本里同一个 name 出现多条。
+一条知识只有在被读到时才存在。所以引擎问的不是"它多重要"，而是"它挂在哪张图的哪个节点上、谁在第几步读到它"。
 
-`lint` 只报不改，发现问题时退出码为 2。
+- **节点**：目录行、`SKILL.md`、`references/x.md`、`AGENTS.md`、沿革条目、账本……
+- **边**：一段文本让读者去打开另一个节点。**只要有文本，就能加边。**
+- **根**：不需要动作就在上下文里的节点（目录行每轮、`AGENTS.md` 每会话一次）。
+- **深度**：到根的最短跳数；每多一跳，多一次"读不读"的赌注和一次上下文成本。
 
-## 提案为什么要钉哈希
+四条边规则：**边带条件、节点与路径无关、跨包单向、不许成环**。
+包内默认成树，但**允许 DAG**——一个 reference 服务多个处境是合法的，只要它自足、每条边各带条件。
+所以 `check` 不卡"单亲"，只卡结构上真会坏的四种：目标存在、无孤儿、无环、深度 > 3（警告）。
 
-`propose` 会记录目标 registry 条目和 `SKILL.md` 的 sha256。`accept` 前重新计算；只要目标变过，就判 `stale` 并拒绝收编（退出码 2）。
+**图之外还有"须知"**：图只说明到得了，不说明你为什么在这里。运行时根上的 `AGENTS.md` 负责定位——这是培训、不是岔路。
+没有它，模型只会在节点间机械旅行；有了它，同一份 reference 会被当成教材来读（读全，不摘取）。
 
-原因不是洁癖：执行体每轮都会被换掉，机器是唯一能记住“当时的那个状态”的东西。提案一旦和它依据的状态脱钩，人批准的就是一个已经不存在的东西。重新 `propose` 的成本，远小于批错一次的成本。
+## 沿革条目：一种形态
 
-## 它实际长这样
+字段：`id / at / kind / scope / cause[] / type / state / why / evidence[] / by / sessions[] / pin / legacy?`
 
-以下为 2026-10-28 的真实终端记录（路径与重复提示从略；`[exit 2]` 是实际退出码）。先 `propose`，改一下 `SKILL.md`，再 `stale` 和 `accept`；旧提案仍是 open，所以先 `reject` 结案，同名 `propose` 才成功。
+- **kind**：`观察`（撞过的壁 ＋ 那一眼）｜`提案`（要改什么、为什么）。
+- **state**：观察 `open → reviewed`；提案 `open → merged | rejected | superseded`；通用 `archived`。
+- **正文不可变**：文件名 = `<日期>-<id>-<正文哈希8位>.md`，`check` 重算。要改就新开一条、旧的置 `superseded`。
+- **永不删**：只追加、只改状态。被否决的理由是最贵的负向知识。
 
-```text
-$ S="$DSH_HOME/skills/skill-evolution/scripts/skillctl.js"
-$ node "$S" propose demo-skill --note "把验证步骤写清楚"
-钉在：version 1 / skill sha256 807b2ebb6949…
-$ node "$S" stale demo-skill
-demo-skill               open      STALE（SKILL.md 已变）
-$ node "$S" accept demo-skill --by user
-拒绝收编：提案已 stale（SKILL.md 在立提案之后变过）。
-[exit 2]
-$ node "$S" reject demo-skill --why "目标已变，旧提案作废"
-$ node "$S" propose demo-skill --note "重新钉在改后的目标上"
-$ node "$S" accept demo-skill --by user
-已收编：demo-skill → version 2（by user）
-```
+## 五个动作与命令
 
-## `write: user` 是什么
+| 动作 | 命令 |
+|---|---|
+| 记 | `note --what 事实 --lesson 那一眼 --scope <技能\|无归属> --cause <5值> --type <枚举>` |
+| 读 | `self <name>`（改之前）／`train authoring`（造之前） |
+| 提 | `propose <name> --why 理由`／`supersede <id> --why 理由` |
+| 批 | `merge <name> --why 理由`／`reject <name> --why 理由` |
+| 扫 | `view`／`check` |
 
-每个条目有一个 `write` 字段，声明“这块是谁写的”：
+登记与巡检：`init`／`list`／`show`／`add`／`set`／`promote`／`sync`／`render`／`roundtrip`／`stale`／`review`。
+旧名保留为别名：`friction add` → `note`、`accept` → `merge`、`lint` → `check`、`report` → `view`。
 
-- `user`：人写的。agent 不得直接改，只能走 `propose`；用户本人可以用 `--user` 旁路。
-- `agent`：agent 自己写的，可以自行 refine。
-- `user-gated`：还在 `scaffold/` 里，尚未成为 live skill。
+## 一次完整流程
 
-`skillctl set` 会拦下对 `write: user` 条目的内容字段修改。注意这是**入口处的程序约束，不是文件系统沙箱**：直接编辑 `SKILL.md` 仍然可能发生，`lint` 也不能证明某次正文修改经过了确认门。这个边界应在使用前就知道。
+以下命令假设 `DSH_HOME` 已指向运行时的技能根，引擎在 `$DSH_HOME/skills/skill-evolution/`。
 
-## 命令一览
-
-下面是 `node skill-evolution/scripts/skillctl.js --help` 的真实输出（本仓库当前版本）：
-
-```text
-skillctl —— skill-evolution 的手（不是脑）。engine skill-evo-v13 / registry schema skill-evo-v3
-
-  init                             建目录与空 registry（幂等；从零开始的第一步）
-  list [--tier T] [--status S]      按层/状态列出
-  show <name>                       单条完整条目 + 常驻目录那一行
-  add <name> [--tier T] [...]       建档（draft，落在 .evolution/scaffold/）
-  set <name> k=v [k=v ...]          改字段；支持 skips+1 / openIssues+=文本
-  promote <name> <tier> [--enforces]  沿深度轴移动（判断已由人做出后调用）
-  propose <name> [--note 文字]      立提案，**钉住目标当前哈希**（目标一改即 stale）；旧记录→proposalsHistory、旧文件→archive
-  stale [name]                      查提案是否已过期（过期者不得收编）；无未结提案时显示历史供参考
-  accept <name> [--by user|agent]   校验未过期后收编（过期则拒绝，退出码 2）；结案记录入 proposalsHistory
-  reject <name> --why 理由          否决，**理由必须留下**（被拒的理由是最贵的负向知识）；结案记录入 proposalsHistory
-  friction add --what 事实 --lesson 心眼 [--type 类型]
-                                    记一次碰壁（**没有"事前该问的那句"就不许记**）；
-                                    --type 是**声明**的失败类型（不推断）：同类型的待评估条目自动判 repeat
-  friction list                     看待评估的摩擦账本（重复/绕标 repeat，优先）
-  friction clear [--batch 类型摘要] [--layer 选层结论]
-                                    把已评估的移入归档（append-only，不丢）；
-                                    给 --batch 时写一条**批次头**（类型 + 条目 id + 选层结论）——否则 fork 的分类结论无处可落
-  lint                              校验 registry ↔ 磁盘 + 提案新鲜度（只报不改，退出码 2）
-  roundtrip                         证明注册表读写往返无损（唯一真源的完整性自检）
-  render                            生成 .evolution/catalog.md（给人看的目录预览）
-  report                            报告晋升/淘汰/触发失败候选（只报告，不决定）
-```
-
-## 一次完整流程：add → propose → accept
-
-以下命令都假设 `DSH_HOME` 已指向运行时的技能根。示例里的名字是虚构的。
-
-```bash
+~~~bash
 S="$DSH_HOME/skills/skill-evolution/scripts/skillctl.js"
 
 node "$S" init
+node "$S" train authoring          # 造技能前的岗位培训（没有它 add 会拒）
 node "$S" add blog-search --tier global
 # 编辑 .evolution/scaffold/blog-search/SKILL.md，再移入 $DSH_HOME/skills/blog-search/
 node "$S" set blog-search status=active
-node "$S" propose blog-search --note "补上验证步骤"
-node "$S" stale blog-search
-node "$S" accept blog-search --by user
-node "$S" lint
-```
+node "$S" sync blog-search
 
-这里有一个当前版本的实际边界：`accept` **不替你应用 diff，也不修改 `SKILL.md`**。它校验提案钉住的状态仍在，然后登记收编、升版本、写 changelog。正文改动要么在 `propose` 前已经落盘，要么由人按提案应用后重新 `propose`。示例采用前一种做法。
+node "$S" self blog-search         # 留下读记录（资格）
+node "$S" propose blog-search --why "补上验证步骤" --note "改什么 / 为什么 / 否决了什么"
+node "$S" merge blog-search --why "用户批准" --by user
+# 应用正文改动，然后
+node "$S" sync blog-search
+node "$S" check
+~~~
+
+**顺序不能反**：先改文件再 `merge`，等于把自己批准的东西变成 stale（提案钉的是改前的哈希）。
+`merge` 只登记收编、升版本、写 changelog，不替你改正文；应用完记得 `sync`，把整包哈希落回 registry。
+
+## check 抓什么
+
+`check` 是格式门，只报不改，有问题时退出码 2。它抓：
+
+- registry ↔ 磁盘不一致（悬空条目、裸 skill、name 不一致、description 为空或超长）；
+- 沿革条目 schema（kind/state/cause/type/scope/by）、**文件名哈希与正文不符**（正文被改过）、evidence 悬空；
+- 未结提案 stale、被否决的提案缺理由；
+- 引用图：指针指向不存在的文件、**孤儿引用**、**成环**、深度 > 3（警告）；
+- **包哈希漂移**（改了本体/references/scripts 却没 `sync`）。
 
 ## 测试怎么跑
 
 需要 Node 18 或更高版本。仓库不安装任何 npm 依赖。
 
-```bash
+~~~bash
 node --test skill-evolution/tests/
-```
+~~~
 
-测试使用 `node:test` 与 `node:assert`，每个用例创建临时目录并通过 `DSH_HOME` 指过去，结束时删除；不会读写真实 registry。当前共有 11 个用例，覆盖：
-
-- 初始化、目录结构、幂等性；
-- add / list / show；
-- 提案哈希、stale 判定、过期提案拒绝；
-- accept 入 `proposalsHistory`、reject 保留理由；
-- `write: user` 的 `set` 拦截与 `--user`；
-- friction 的 lesson 必填、list、clear 归档；
-- lint 的 registry ↔ 磁盘不一致；
-- roundtrip 无损；
-- render 的 catalog 条目。
-
-CI 在 Ubuntu 上用 Node 20 与 22 跑同一条命令。
+每个用例创建临时目录并通过 `DSH_HOME` 指过去，结束时删除；不会读写真实 registry。
+当前 13 个用例覆盖：init 幂等；add 的培训门；note 的字段与 repeat；self 读记录；merge 的四道门（读记录／stale／批准者≠作者）；
+check 的四类结构错；reject 保留理由；review；render。CI 在 Ubuntu 上用 Node 20 与 22 跑同一条命令。
 
 ## 已知限制
 
-- **设计 v2 未实现。** 本仓库交付的是能跑的 v13；下一版为什么重画、想解决什么、哪些结构问题还没定，见 [docs/DESIGN-v2.md](docs/DESIGN-v2.md)。
-- **命令面偏大。** 18 个子命令里有一部分是历史叠加；v2 计划收成五个动作族，但还没有实现。
-- **没有运行时拦截。** `write: user` 只在 `skillctl set` 入口生效；直接改文件、绕过 CLI 仍然可能。
-- **没有文件锁。** 假定同一时刻只有一个写者。并发运行两个 `skillctl` 进程可能互相覆盖。
-- **摩擦的 repeat 只看活账本。** 已归档条目不参与同类型判断；跨归档重复仍要人看。
-- **YAML 是保守子集。** 只接受引擎自己写出的映射、列表、行内数组和 `|` 块标量；不是通用 YAML 解析器。
-- **没有 hit 统计。** `skips` 是唯一负向信号，`hits` 尚未由运行时自动采集。
-- **`accept` 不应用改动。** 它只登记收编；正文应用是另一个动作，当前需要人完成。
+- **registry 仍是声明真源。** 计划改为"声明随自我、registry 做投影"，还没做。
+- **`merge` 不应用正文。** 它登记收编；正文应用是另一个动作，需要人完成，再 `sync`。
+- **没有运行时拦截。** 读记录与 merge 门都在 CLI 里；直接改文件仍可能发生，只能事后对账。
+- **没有文件锁。** 假定同一时刻只有一个写者。
+- **YAML 是保守子集。** 只接受引擎自己写出的映射、列表、行内数组和 `|` 块标量。
+- **没有 hit 统计。** `skips` 是唯一负向信号。
 
-安装方式、目录锚点和完整规则看 [SKILL.md](SKILL.md)。空 registry 模板在 [registry.example.yaml](registry.example.yaml)，脱敏的单条目示例在 [examples/registry-with-one-skill.yaml](examples/registry-with-one-skill.yaml)。
+## 文件结构
+
+~~~
+SKILL.md                 元协议：锚点、分发图、五个动作、三条承重规则
+references/authoring.md  作者培训包（造/重写技能前领取；不随正文加载）
+scripts/skillctl.js      引擎（无第三方依赖）
+registry.example.yaml    空 registry 模板
+examples/                脱敏的单条目示例与配套桩文件
+docs/DESIGN.md           设计（v16，已实现）
+tests/                   node:test 用例
+~~~
